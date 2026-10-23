@@ -11,41 +11,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      VPS_HOST: ${{ secrets.PDD_VPS_HOST }}
-      VPS_USER: ${{ secrets.PDD_VPS_USER }}
-      VPS_SSH_KEY: ${{ secrets.PDD_VPS_SSH_KEY }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
       BOT_TOKEN: ${{ secrets.PDD_BOT_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check required secrets
+      - name: Validate configuration
         shell: bash
         run: |
-          for key in VPS_HOST VPS_USER VPS_SSH_KEY BOT_TOKEN; do
+          for key in VPS_HOST SSHPASS BOT_TOKEN; do
             if [ -z "${!key:-}" ]; then
-              echo "::error::Missing required configuration: $key"
+              echo "::error::Missing GitHub secret: $key"
               exit 1
             fi
           done
-      - name: Configure SSH
+      - name: Install SSH helper
+        run: sudo apt-get update -qq && sudo apt-get install -y sshpass
+      - name: Verify server access and Docker
         shell: bash
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -T 10 -H "$VPS_HOST" >> ~/.ssh/known_hosts
-      - name: Upload isolated app
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new -o BatchMode=no "root@$VPS_HOST" 'docker compose version && mkdir -p /opt/n13-pdd'
+      - name: Upload PDD app only
         shell: bash
         run: |
-          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'mkdir -p /opt/n13-pdd'
           tar --exclude=.git --exclude=data -czf - . |
-            ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'tar -xzf - -C /opt/n13-pdd'
-      - name: Install token without printing it
+            sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'tar -xzf - -C /opt/n13-pdd'
+      - name: Install PDD Telegram credential securely
         shell: bash
         run: |
           printf 'PDD_BOT_TOKEN=%s\n' "$BOT_TOKEN" |
-            ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'umask 077; cat > /opt/n13-pdd/.env'
-      - name: Start isolated stack
+            sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'umask 077; cat > /opt/n13-pdd/.env; chmod 600 /opt/n13-pdd/.env'
+      - name: Start only PDD stack
         shell: bash
         run: |
-          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
-            'cd /opt/n13-pdd && docker compose -p n13-pdd -f compose.yml up -d --build && docker compose -p n13-pdd -f compose.yml ps'
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" \
+            'cd /opt/n13-pdd && docker compose -p n13-pdd up -d --build && docker compose -p n13-pdd ps'
