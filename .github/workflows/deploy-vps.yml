@@ -1,6 +1,10 @@
 name: Deploy N13 PDD to VPS
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-vps.yml'
 permissions:
   contents: read
 concurrency:
