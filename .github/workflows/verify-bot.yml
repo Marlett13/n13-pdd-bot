@@ -1,0 +1,21 @@
+name: Verify Telegram bot credentials
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/verify-bot.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secret availability
+        env:
+          TOKEN_PRESENT: ${{ secrets.PDD_BOT_TOKEN != '' }}
+        run: |
+          if [ "$TOKEN_PRESENT" != "true" ]; then
+            echo "Missing PDD_BOT_TOKEN"
+            exit 1
+          fi
+          echo "Secret is configured"
