@@ -9,6 +9,11 @@ if __name__ == "__main__":
     # importer currently writes to data/abm_candidate relative to working dir
     if dest.resolve() != Path("data").resolve():
         raise SystemExit("Run importer in repository directory with the default data root")
+    if (dest / "abm_candidate" / "audit.json").exists():
+        from app.question_bank import QuestionBank
+        QuestionBank(dest / "abm_candidate")
+        print("Existing audited candidate bank found; preserving persistent data")
+        raise SystemExit(0)
     request = urllib.request.Request(SOURCE, headers={"User-Agent": "N13-PDD-Installer/1.0"})
     with urllib.request.urlopen(request, timeout=90) as response:
         result = run(response.read())
