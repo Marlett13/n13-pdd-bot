@@ -1,0 +1,20 @@
+name: Validate VPS bootstrap
+on:
+  push:
+    paths:
+      - 'tools/bootstrap_vps.sh'
+      - '.github/workflows/bootstrap-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax and build context
+        run: |
+          bash -n tools/bootstrap_vps.sh
+          docker compose -f compose.yml config -q
+        env:
+          PDD_BOT_TOKEN: placeholder
