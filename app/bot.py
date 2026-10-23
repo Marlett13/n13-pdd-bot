@@ -127,17 +127,30 @@ async def category(call: CallbackQuery):
 def ticket_menu():
     return keyboard([(f"Билет {i}", f"ticket:{i}") for i in range(1, 41)])
 
+def question_text(ticket_number, position, question):
+    """Keep full answers in message body, not on truncated Telegram buttons."""
+    options = "\n".join(
+        f"{index}. {choice}" for index, choice in enumerate(question["choices"], 1)
+    )
+    return (
+        f"Билет {ticket_number} | Вопрос {position + 1}/20\n\n"
+        f"{question['text']}\n\n{options}\n\nВыберите номер ответа:"
+    )
+
 async def show_question(call, state):
-    questions = bank.ticket(state["ticket"])
-    pos = state["position"]
-    q = questions[pos]
-    answer_buttons = [(f"{n+1}. {value}", f"answer:{n}") for n, value in enumerate(q["choices"])]
-    text = f"Билет {state['ticket']} | Вопрос {pos+1}/20\\n\\n{q['text']}"
+    q = bank.ticket(state["ticket"])[state["position"]]
+    text = question_text(state["ticket"], state["position"], q)
+    buttons = keyboard([(str(i), f"answer:{i-1}") for i in range(1, len(q["choices"]) + 1)])
     path = bank.image_path(q)
-    if path:
-        sent = await call.message.answer_photo(FSInputFile(path), caption=text[:1024], reply_markup=keyboard(answer_buttons))
+    if path and len(text) <= 1024:
+        sent = await call.message.answer_photo(
+            FSInputFile(path), caption=text, reply_markup=buttons
+        )
+    elif path:
+        await call.message.answer_photo(FSInputFile(path))
+        sent = await call.message.answer(text, reply_markup=buttons)
     else:
-        sent = await call.message.answer(text, reply_markup=keyboard(answer_buttons))
+        sent = await call.message.answer(text, reply_markup=buttons)
     state["question_message_id"] = sent.message_id
     save_state(call.from_user.id, state)
 
