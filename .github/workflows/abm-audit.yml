@@ -1,6 +1,10 @@
 name: N13 ABM candidate audit
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'tools/fetch_abm.py'
+      - '.github/workflows/abm-audit.yml'
 permissions:
   contents: read
 jobs:
