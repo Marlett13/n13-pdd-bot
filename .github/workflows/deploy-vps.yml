@@ -16,37 +16,41 @@ jobs:
     timeout-minutes: 25
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
-      SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+      SSH_KEY: ${{ secrets.PDD_VPS_SSH_KEY }}
       BOT_TOKEN: ${{ secrets.PDD_BOT_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate configuration
         shell: bash
         run: |
-          for key in VPS_HOST SSHPASS BOT_TOKEN; do
+          for key in VPS_HOST SSH_KEY BOT_TOKEN; do
             if [ -z "${!key:-}" ]; then
               echo "::error::Missing GitHub secret: $key"
               exit 1
             fi
           done
-      - name: Install SSH helper
-        run: sudo apt-get update -qq && sudo apt-get install -y sshpass
+      - name: Configure deployment key
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf "%s\\n" "$SSH_KEY" > ~/.ssh/id_n13_pdd
+          chmod 600 ~/.ssh/id_n13_pdd
       - name: Verify server access and Docker
         shell: bash
         run: |
-          sshpass -e ssh -o StrictHostKeyChecking=accept-new -o BatchMode=no "root@$VPS_HOST" 'docker compose version && mkdir -p /opt/n13-pdd'
+          ssh -i ~/.ssh/id_n13_pdd -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'docker compose version && mkdir -p /opt/n13-pdd'
       - name: Upload PDD app only
         shell: bash
         run: |
           tar --exclude=.git --exclude=data -czf - . |
-            sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'tar -xzf - -C /opt/n13-pdd'
+            ssh -i ~/.ssh/id_n13_pdd -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'tar -xzf - -C /opt/n13-pdd'
       - name: Install PDD Telegram credential securely
         shell: bash
         run: |
           printf 'PDD_BOT_TOKEN=%s\n' "$BOT_TOKEN" |
-            sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'umask 077; cat > /opt/n13-pdd/.env; chmod 600 /opt/n13-pdd/.env'
+            ssh -i ~/.ssh/id_n13_pdd -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'umask 077; cat > /opt/n13-pdd/.env; chmod 600 /opt/n13-pdd/.env'
       - name: Start only PDD stack
         shell: bash
         run: |
-          sshpass -e ssh -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" \
+          ssh -i ~/.ssh/id_n13_pdd -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" \
             'cd /opt/n13-pdd && docker compose -p n13-pdd up -d --build && docker compose -p n13-pdd ps'
