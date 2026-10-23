@@ -1,19 +1,30 @@
+x-pdd-base: &pdd-base
+  build: .
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  volumes:
+    - pdd_data:/srv/n13/data
+
 services:
+  prepare-data:
+    <<: *pdd-base
+    restart: "no"
+    command: ["python", "-m", "tools.prepare_data"]
   pdd:
-    build: .
+    <<: *pdd-base
     restart: unless-stopped
+    depends_on:
+      prepare-data:
+        condition: service_completed_successfully
     environment:
-      BOT_TOKEN: ${PDD_BOT_TOKEN:?Set PDD_BOT_TOKEN in an untracked .env file}
+      BOT_TOKEN: ${PDD_BOT_TOKEN:?Set PDD_BOT_TOKEN in untracked .env}
       DATABASE_PATH: /srv/n13/data/n13-pdd.sqlite3
-    volumes:
-      - pdd_data:/srv/n13/data
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     init: true
+
 volumes:
   pdd_data:
