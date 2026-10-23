@@ -1,0 +1,24 @@
+name: N13 ABM candidate audit
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download and audit candidate
+        run: python tools/fetch_abm.py
+      - name: Save candidate and audit (not production data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abm-candidate-audit
+          path: data/abm_candidate/
+          if-no-files-found: warn
+          retention-days: 7
