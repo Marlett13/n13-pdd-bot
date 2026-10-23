@@ -94,7 +94,7 @@ async def goal(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("country:"))
 async def country(call: CallbackQuery):
-    state = sessions.get(call.from_user.id)
+    state = get_state(call.from_user.id)
     if not state or state.get("step") != "country":
         await call.answer("Начните с /start", show_alert=True)
         return
@@ -109,7 +109,7 @@ async def country(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("category:"))
 async def category(call: CallbackQuery):
-    state = sessions.get(call.from_user.id)
+    state = get_state(call.from_user.id)
     if not state or state.get("step") != "category":
         await call.answer("Начните с /start", show_alert=True)
         return
@@ -143,7 +143,7 @@ async def show_question(call, state):
 
 @router.callback_query(F.data.startswith("ticket:"))
 async def ticket(call: CallbackQuery):
-    state = sessions.get(call.from_user.id)
+    state = get_state(call.from_user.id)
     if not state or state.get("step") != "ready":
         await call.answer("Начните с /start и завершите настройку", show_alert=True)
         return
@@ -158,7 +158,7 @@ async def ticket(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("answer:"))
 async def answer(call: CallbackQuery):
-    state = sessions.get(call.from_user.id)
+    state = get_state(call.from_user.id)
     if not state or state.get("step") != "training":
         await call.answer("Тренировка не запущена", show_alert=True)
         return
@@ -202,15 +202,18 @@ async def resume(call: CallbackQuery):
 
 async def main():
     global bank, store
-    token = os.getenv("BOT_TOKEN")
+    token = os.getenv("BOT_TOKEN") or os.getenv("PDD_BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN environment variable is required")
-    bank = QuestionBank()
+    bank = QuestionBank(os.getenv("PDD_BANK_PATH", "data/abm_candidate"))
     store = SessionStore(os.getenv("DATABASE_PATH", "data/n13-pdd.sqlite3"))
     bot = Bot(token)
     dp = Dispatcher()
     dp.include_router(router)
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
