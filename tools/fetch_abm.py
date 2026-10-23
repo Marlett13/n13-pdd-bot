@@ -33,7 +33,9 @@ def run(blob: bytes):
                 image = q.get("image")
                 if image:
                     image = image.replace("\\", "/").removeprefix("./").removeprefix("tmp/")
-                    if ".." in pathlib.PurePosixPath(image).parts or not image.startswith("images/A_B/"):
+                    if image == "images/no_image.jpg":
+                        image = None
+                    elif ".." in pathlib.PurePosixPath(image).parts or not image.startswith("images/A_B/"):
                         errors.append(f"{ticket}/{pos}: unsafe image path")
                         image = None
                     else:
