@@ -7,7 +7,7 @@ import asyncio
 import os
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.question_bank import QuestionBank
@@ -31,6 +31,12 @@ def keyboard(buttons):
         for label, value in buttons
     ])
 
+@router.message(Command("delete_data"))
+async def delete_data(message: Message):
+    sessions.pop(message.from_user.id, None)
+    store.delete(message.from_user.id)
+    await message.answer("Ваш профиль и ответы удалены из локальной базы N13 ПДД.")
+
 @router.message(CommandStart())
 async def start(message: Message):
     previous = get_state(message.from_user.id)
@@ -45,7 +51,7 @@ async def start(message: Message):
     await message.answer(
         "N13 ПДД 🚘\\nДля обучения нужно согласие на обработку Telegram ID "
         "и ответов в рамках текущей сессии. При согласии Telegram ID и ответы сохраняются в локальной БД. "
-        "При отказе обучение не начнётся.",
+        "Для удаления данных используйте /delete_data. При отказе обучение не начнётся.",
         reply_markup=keyboard([("Согласен", "consent:yes"), ("Не согласен", "consent:no")]),
     )
 
@@ -129,9 +135,11 @@ async def show_question(call, state):
     text = f"Билет {state['ticket']} | Вопрос {pos+1}/20\\n\\n{q['text']}"
     path = bank.image_path(q)
     if path:
-        await call.message.answer_photo(FSInputFile(path), caption=text[:1024], reply_markup=keyboard(answer_buttons))
+        sent = await call.message.answer_photo(FSInputFile(path), caption=text[:1024], reply_markup=keyboard(answer_buttons))
     else:
-        await call.message.answer(text, reply_markup=keyboard(answer_buttons))
+        sent = await call.message.answer(text, reply_markup=keyboard(answer_buttons))
+    state["question_message_id"] = sent.message_id
+    save_state(call.from_user.id, state)
 
 @router.callback_query(F.data.startswith("ticket:"))
 async def ticket(call: CallbackQuery):
@@ -154,6 +162,9 @@ async def answer(call: CallbackQuery):
     if not state or state.get("step") != "training":
         await call.answer("Тренировка не запущена", show_alert=True)
         return
+    if state.get("question_message_id") != call.message.message_id:
+        await call.answer("Этот вопрос уже обработан", show_alert=True)
+        return
     answer_index = int(call.data.split(":", 1)[1])
     question = bank.ticket(state["ticket"])[state["position"]]
     if answer_index not in range(len(question["choices"])):
@@ -163,6 +174,7 @@ async def answer(call: CallbackQuery):
     if not correct:
         state["mistakes"] += 1
     state["position"] += 1
+    state.pop("question_message_id", None)
     if state["position"] == 20:
         state["step"] = "ready"
     store.record_answer(call.from_user.id, state, state["position"] - 1, answer_index, correct)
