@@ -9,13 +9,32 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
-      - name: Check secret availability
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Verify Telegram identity via getMe
         env:
-          TOKEN_PRESENT: ${{ secrets.PDD_BOT_TOKEN != '' }}
+          BOT_TOKEN: ${{ secrets.PDD_BOT_TOKEN }}
         run: |
-          if [ "$TOKEN_PRESENT" != "true" ]; then
-            echo "Missing PDD_BOT_TOKEN"
-            exit 1
-          fi
-          echo "Secret is configured"
+          python - <<'PY'
+          import asyncio
+          import os
+          from aiogram import Bot
+          async def verify():
+              token = os.environ.get("BOT_TOKEN")
+              if not token:
+                  raise SystemExit("Missing PDD_BOT_TOKEN")
+              bot = Bot(token=token)
+              try:
+                  me = await bot.get_me()
+                  if me.username != "N13_PDD_Trainer_Bot":
+                      raise SystemExit("Unexpected bot username")
+                  print("Bot credentials validated; username matched.")
+              finally:
+                  await bot.session.close()
+          asyncio.run(verify())
+          PY
