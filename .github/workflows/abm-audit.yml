@@ -18,6 +18,8 @@ jobs:
           python-version: '3.12'
       - name: Download and audit candidate
         run: python tools/fetch_abm.py
+      - name: Check question bank integration
+        run: python -m tests.test_question_bank
       - name: Save candidate and audit (not production data)
         if: always()
         uses: actions/upload-artifact@v4
