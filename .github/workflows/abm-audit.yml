@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'tools/fetch_abm.py'
+      - 'app/**'
+      - 'tests/**'
       - '.github/workflows/abm-audit.yml'
 permissions:
   contents: read
