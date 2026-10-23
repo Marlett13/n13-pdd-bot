@@ -25,7 +25,11 @@ cd "$APP_DIR"
 if [ ! -s .env ]; then
   echo 'Telegram bot token required once for first installation.'
   echo 'Paste the token into this protected VPS console. It will not echo.'
-  read -r -s -p 'Bot token: ' PDD_TOKEN
+  if [ ! -r /dev/tty ]; then
+    echo 'Interactive terminal unavailable. Re-run this script in the VPS console.' >&2
+    exit 1
+  fi
+  read -r -s -p 'Bot token: ' PDD_TOKEN </dev/tty
   echo
   if [[ ! "$PDD_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
     echo 'Token format invalid; nothing written.' >&2
