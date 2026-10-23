@@ -16,7 +16,7 @@ if [ -e "$APP_DIR" ] && [ ! -d "$APP_DIR/.git" ]; then
   exit 1
 fi
 if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch --ff-only origin main
+  git -C "$APP_DIR" fetch origin main
   git -C "$APP_DIR" merge --ff-only origin/main
 else
   git clone --branch main --depth 1 "$REPO" "$APP_DIR"
