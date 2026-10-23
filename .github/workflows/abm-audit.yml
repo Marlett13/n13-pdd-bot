@@ -6,6 +6,7 @@ on:
       - 'tools/fetch_abm.py'
       - 'app/**'
       - 'tests/**'
+      - 'requirements.txt'
       - '.github/workflows/abm-audit.yml'
 permissions:
   contents: read
@@ -20,6 +21,12 @@ jobs:
           python-version: '3.12'
       - name: Download and audit candidate
         run: python tools/fetch_abm.py
+      - name: Install Telegram dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Telegram layer
+        run: python -m compileall -q app
+      - name: Import Telegram layer
+        run: python -c 'import app.bot; print("Telegram layer imports")'
       - name: Check question bank integration
         run: python -m tests.test_question_bank
       - name: Save candidate and audit (not production data)
