@@ -1,9 +1,13 @@
 import unittest
+import tempfile
+from pathlib import Path
 from app.storage import SessionStore
 
 class ReviewStorageTests(unittest.TestCase):
     def test_recent_answers_order_and_wrong_answers(self):
-        store = SessionStore(":memory:")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = SessionStore(str(Path(tmp.name) / "progress.sqlite3"))
         user = 8143
         state = store.accept(user)
         state.update(ticket=8, step="training", position=0)
