@@ -363,7 +363,7 @@ async def answer(call: CallbackQuery):
             options.append((f"🔎 Разбор ошибок ({len(state['last_mistakes'])})", "review:0"))
         options.extend([("📚 Выбрать билет", "nav:tickets"), ("🏠 В меню", "nav:home")])
         await call.message.answer(
-            f"Билет завершён. Ошибок: {errors}/20\\n"
+            f"Билет завершён. Ошибок: {errors}/20\n"
             "Ответы для разбора взяты из учебной базы, не сверенной с официальными билетами.",
             reply_markup=keyboard(options),
         )
