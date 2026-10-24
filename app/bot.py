@@ -250,6 +250,65 @@ async def show_question(call, state):
     state["question_message_id"] = sent.message_id
     save_state(call.from_user.id, state)
 
+def review_keyboard(index, length):
+    items = []
+    if index > 0:
+        items.append(("◀️ Предыдущая", f"review:{index-1}"))
+    if index + 1 < length:
+        items.append(("Следующая ▶️", f"review:{index+1}"))
+    items.append(("🏠 В меню", "nav:home"))
+    return keyboard(items)
+
+async def show_review(call, state, index):
+    mistakes = state.get("last_mistakes") or []
+    if index < 0 or index >= len(mistakes):
+        await call.answer("Нет ошибок для разбора", show_alert=True)
+        return
+    ticket_number = state["last_ticket"]
+    row = mistakes[index]
+    question = bank.ticket(ticket_number)[row["position"]]
+    answers = "\n".join(f"{i}. {answer}" for i, answer in enumerate(question["choices"], 1))
+    explanation = (question.get("explanation") or "").strip()
+    body = (
+        f"🔎 Разбор ошибок {index+1}/{len(mistakes)}\n"
+        f"Билет {ticket_number}, вопрос {row['position']+1}/20\n\n"
+        f"{question['text']}\n\n{answers}\n\n"
+        f"Ваш ответ: {row['answer']+1}\n"
+        f"Правильный по учебной базе: {question['correct']+1}"
+    )
+    if explanation:
+        body += f"\n\nПояснение из учебной базы:\n{explanation}"
+    else:
+        body += "\n\nПояснение отсутствует в источнике."
+    markup = review_keyboard(index, len(mistakes))
+    image = bank.image_path(question)
+    if image and len(body) <= 1024:
+        sent = await call.message.answer_photo(FSInputFile(image), caption=body, reply_markup=markup)
+    else:
+        if image:
+            await call.message.answer_photo(FSInputFile(image))
+        sent = await call.message.answer(body[:4096], reply_markup=markup)
+    state["review_message_id"] = sent.message_id
+    save_state(call.from_user.id, state)
+
+@router.callback_query(F.data.startswith("review:"))
+async def review(call: CallbackQuery):
+    state = get_state(call.from_user.id)
+    if not state or not state.get("last_mistakes"):
+        await call.answer("Ошибок для разбора нет", show_alert=True)
+        return
+    if state.get("review_message_id") and state["review_message_id"] != call.message.message_id:
+        await call.answer("Это старый экран разбора", show_alert=True)
+        return
+    try:
+        index = int(call.data.split(":", 1)[1])
+    except ValueError:
+        await call.answer("Неверный номер", show_alert=True)
+        return
+    await call.answer()
+    await call.message.edit_reply_markup(reply_markup=None)
+    await show_review(call, state, index)
+
 @router.callback_query(F.data.startswith("ticket:"))
 async def ticket(call: CallbackQuery):
     state = get_state(call.from_user.id)
@@ -261,6 +320,7 @@ async def ticket(call: CallbackQuery):
         await call.answer("Неизвестный билет", show_alert=True)
         return
     state.update(step="training", ticket=num, position=0, mistakes=0)
+    state.pop("review_message_id", None)
     save_state(call.from_user.id, state)
     await call.answer()
     await call.message.edit_reply_markup(reply_markup=None)
@@ -293,9 +353,19 @@ async def answer(call: CallbackQuery):
     await call.answer("Верно!" if correct else f"Неверно. Правильный ответ: {question['correct'] + 1}")
     if state["position"] == 20:
         errors = state["mistakes"]
+        rows = store.latest_ticket_review(call.from_user.id, state["ticket"])
+        state["last_ticket"] = state["ticket"]
+        state["last_mistakes"] = [row for row in rows if not row["correct"]]
+        state.pop("review_message_id", None)
+        save_state(call.from_user.id, state)
+        options = []
+        if state["last_mistakes"]:
+            options.append((f"🔎 Разбор ошибок ({len(state['last_mistakes'])})", "review:0"))
+        options.extend([("📚 Выбрать билет", "nav:tickets"), ("🏠 В меню", "nav:home")])
         await call.message.answer(
-            f"Билет завершён. Ошибок: {errors}/20",
-            reply_markup=keyboard([("📚 Выбрать билет", "nav:tickets"), ("🏠 В меню", "nav:home")]),
+            f"Билет завершён. Ошибок: {errors}/20\\n"
+            "Ответы для разбора взяты из учебной базы, не сверенной с официальными билетами.",
+            reply_markup=keyboard(options),
         )
     else:
         await show_question(call, state)
