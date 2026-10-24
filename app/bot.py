@@ -306,6 +306,8 @@ async def review_command(message: Message):
                 state["last_mistakes"] = [r for r in rows if not r["correct"]]
                 save_state(message.from_user.id, state)
     mistakes = state.get("last_mistakes") or []
+    state.pop("review_message_id", None)
+    save_state(message.from_user.id, state)
     if not mistakes:
         await message.answer("Сохранённых ошибок завершённого билета не найдено.")
         return
