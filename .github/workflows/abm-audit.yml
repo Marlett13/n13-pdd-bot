@@ -28,7 +28,7 @@ jobs:
       - name: Import Telegram layer
         run: python -c 'import app.bot; print("Telegram layer imports")'
       - name: Test session persistence
-        run: python -m unittest tests.test_storage -v
+        run: python -m unittest discover -s tests -v
       - name: Check question bank integration
         run: python -m tests.test_question_bank
       - name: Save candidate and audit (not production data)
