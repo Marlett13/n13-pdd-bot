@@ -1,0 +1,23 @@
+name: Validate N13 PDD proxy build
+on:
+  push:
+    paths:
+      - 'compose.proxy.yml'
+      - 'compose.yml'
+      - 'requirements.txt'
+      - 'app/bot.py'
+      - '.github/workflows/proxy-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check proxy Compose structure
+        env:
+          PDD_BOT_TOKEN: test-value-only
+        run: docker compose -f compose.yml -f compose.proxy.yml config -q
+      - name: Build app
+        run: docker build -t n13-pdd:proxy-test .
