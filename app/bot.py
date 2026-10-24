@@ -50,7 +50,7 @@ async def start(message: Message):
             await message.answer("Настройка уже начата.", reply_markup=keyboard([("🔄 Начать сначала", "nav:restart")]))
         return
     await message.answer(
-        "N13 ПДД 🚘\\nДля обучения нужно согласие на обработку Telegram ID "
+        "N13 ПДД 🚘\nДля обучения нужно согласие на обработку Telegram ID "
         "и ответов в рамках текущей сессии. При согласии Telegram ID и ответы сохраняются в локальной БД. "
         "Для удаления данных используйте /delete_data. При отказе обучение не начнётся.",
         reply_markup=keyboard([("Согласен", "consent:yes"), ("Не согласен", "consent:no")]),
@@ -129,7 +129,7 @@ async def category(call: CallbackQuery):
     save_state(call.from_user.id, state)
     await call.message.edit_text(
         "Настройки приняты. Условия обмена и допуска уточняйте в Госавтоинспекции. "
-        "База пока не сверена с актуальным официальным сборником.\\n"
+        "База пока не сверена с актуальным официальным сборником.\n\n"
         "Выберите тренировочный билет:",
         reply_markup=ticket_menu(),
     )
@@ -189,7 +189,7 @@ async def home(call: CallbackQuery):
         return
     if state.get("step") == "training" and state.get("question_message_id") == call.message.message_id:
         await call.message.edit_reply_markup(reply_markup=None)
-    await call.message.answer("🏠 Главное меню", reply_markup=home_keyboard(state))
+    await call.message.edit_text("🏠 Главное меню", reply_markup=home_keyboard(state))
     await call.answer()
 
 @router.callback_query(F.data == "nav:tickets")
@@ -201,7 +201,7 @@ async def tickets(call: CallbackQuery):
     state["step"] = "ready"
     state.pop("question_message_id", None)
     save_state(call.from_user.id, state)
-    await call.message.answer("Выберите билет:", reply_markup=ticket_menu())
+    await call.message.edit_text("Выберите билет:", reply_markup=ticket_menu())
     await call.answer()
 
 @router.callback_query(F.data == "nav:restart")
@@ -214,7 +214,7 @@ async def restart(call: CallbackQuery):
     state.pop("ticket", None)
     state.pop("question_message_id", None)
     save_state(call.from_user.id, state)
-    await call.message.answer("Цель подготовки:", reply_markup=keyboard([
+    await call.message.edit_text("Цель подготовки:", reply_markup=keyboard([
         ("Обмен иностранных прав", "goal:exchange"),
         ("Получение впервые", "goal:first"),
         ("Возврат после лишения", "goal:return"),
@@ -307,6 +307,7 @@ async def resume(call: CallbackQuery):
         await call.answer("Нет активной тренировки", show_alert=True)
         return
     await call.answer()
+    await call.message.edit_reply_markup(reply_markup=None)
     await show_question(call, state)
 
 async def main():
