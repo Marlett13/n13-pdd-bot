@@ -43,11 +43,11 @@ async def start(message: Message):
     previous = get_state(message.from_user.id)
     if previous:
         if previous.get("step") == "training":
-            await message.answer("Незавершённая тренировка найдена.", reply_markup=keyboard([("Продолжить", "resume")]))
+            await message.answer("Незавершённая тренировка найдена.", reply_markup=keyboard([("▶️ Продолжить", "resume"), ("🏠 В начало", "nav:home")]))
         elif previous.get("step") == "ready":
             await message.answer("Вернулись к билетам.", reply_markup=ticket_menu())
         else:
-            await message.answer("Настройка уже начата. Продолжайте с /start после завершения или удаления профиля.")
+            await message.answer("Настройка уже начата.", reply_markup=keyboard([("🔄 Начать сначала", "nav:restart")]))
         return
     await message.answer(
         "N13 ПДД 🚘\\nДля обучения нужно согласие на обработку Telegram ID "
@@ -125,8 +125,93 @@ async def category(call: CallbackQuery):
     )
     await call.answer()
 
-def ticket_menu():
-    return keyboard([(f"Билет {i}", f"ticket:{i}") for i in range(1, 41)])
+def ticket_menu(page=0):
+    page = max(0, min(4, page))
+    rows = []
+    for number in range(page * 8 + 1, page * 8 + 9, 2):
+        rows.append([
+            InlineKeyboardButton(text=f"Билет {n}", callback_data=f"ticket:{n}")
+            for n in (number, number + 1)
+        ])
+    navigation = []
+    if page:
+        navigation.append(InlineKeyboardButton(text="◀️", callback_data=f"page:{page-1}"))
+    navigation.append(InlineKeyboardButton(text=f"{page+1}/5", callback_data="noop"))
+    if page < 4:
+        navigation.append(InlineKeyboardButton(text="▶️", callback_data=f"page:{page+1}"))
+    rows.append(navigation)
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="nav:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def home_keyboard(state):
+    buttons = []
+    if state.get("step") == "training":
+        buttons.append(("▶️ Продолжить", "resume"))
+    buttons += [("📚 Выбрать билет", "nav:tickets"), ("🔄 Начать сначала", "nav:restart")]
+    return keyboard(buttons)
+
+@router.callback_query(F.data == "noop")
+async def noop(call: CallbackQuery):
+    await call.answer()
+
+@router.callback_query(F.data.startswith("page:"))
+async def page(call: CallbackQuery):
+    state = get_state(call.from_user.id)
+    if not state or state.get("step") != "ready":
+        await call.answer("Откройте выбор билетов из меню", show_alert=True)
+        return
+    await call.message.edit_reply_markup(reply_markup=ticket_menu(int(call.data.split(":")[1])))
+    await call.answer()
+
+@router.message(Command("menu"))
+async def menu(message: Message):
+    state = get_state(message.from_user.id)
+    if state:
+        await message.answer("🏠 Главное меню", reply_markup=home_keyboard(state))
+    else:
+        await start(message)
+
+@router.callback_query(F.data == "nav:home")
+async def home(call: CallbackQuery):
+    state = get_state(call.from_user.id)
+    if not state:
+        await call.answer("Начните с /start", show_alert=True)
+        return
+    if state.get("step") == "training" and state.get("question_message_id") == call.message.message_id:
+        await call.message.edit_reply_markup(reply_markup=None)
+    await call.message.answer("🏠 Главное меню", reply_markup=home_keyboard(state))
+    await call.answer()
+
+@router.callback_query(F.data == "nav:tickets")
+async def tickets(call: CallbackQuery):
+    state = get_state(call.from_user.id)
+    if not state:
+        await call.answer("Начните с /start", show_alert=True)
+        return
+    state["step"] = "ready"
+    state.pop("question_message_id", None)
+    save_state(call.from_user.id, state)
+    await call.message.answer("Выберите билет:", reply_markup=ticket_menu())
+    await call.answer()
+
+@router.callback_query(F.data == "nav:restart")
+async def restart(call: CallbackQuery):
+    state = get_state(call.from_user.id)
+    if not state:
+        await call.answer("Начните с /start", show_alert=True)
+        return
+    state.update(step="goal", position=0)
+    state.pop("ticket", None)
+    state.pop("question_message_id", None)
+    save_state(call.from_user.id, state)
+    await call.message.answer("Цель подготовки:", reply_markup=keyboard([
+        ("Обмен иностранных прав", "goal:exchange"),
+        ("Получение впервые", "goal:first"),
+        ("Возврат после лишения", "goal:return"),
+        ("Освежить знания", "goal:refresh"),
+        ("Другая причина", "goal:other"),
+    ]))
+    await call.answer()
 
 def question_text(ticket_number, position, question):
     """Keep full answers in message body, not on truncated Telegram buttons."""
@@ -141,7 +226,7 @@ def question_text(ticket_number, position, question):
 async def show_question(call, state):
     q = bank.ticket(state["ticket"])[state["position"]]
     text = question_text(state["ticket"], state["position"], q)
-    buttons = keyboard([(str(i), f"answer:{i-1}") for i in range(1, len(q["choices"]) + 1)])
+    buttons = keyboard([(str(i), f"answer:{i-1}") for i in range(1, len(q["choices"]) + 1)] + [("🏠 В меню", "nav:home")])
     path = bank.image_path(q)
     if path and len(text) <= 1024:
         sent = await call.message.answer_photo(
@@ -168,6 +253,7 @@ async def ticket(call: CallbackQuery):
     state.update(step="training", ticket=num, position=0, mistakes=0)
     save_state(call.from_user.id, state)
     await call.answer()
+    await call.message.edit_reply_markup(reply_markup=None)
     await show_question(call, state)
 
 @router.callback_query(F.data.startswith("answer:"))
@@ -199,8 +285,7 @@ async def answer(call: CallbackQuery):
         errors = state["mistakes"]
         await call.message.answer(
             f"Билет завершён. Ошибок: {errors}/20",
-            reply_markup=keyboard([("Пройти ещё раз", f"ticket:{state['ticket']}"),
-                                  ("Билет 1", "ticket:1")]),
+            reply_markup=keyboard([("📚 Выбрать билет", "nav:tickets"), ("🏠 В меню", "nav:home")]),
         )
     else:
         await show_question(call, state)
