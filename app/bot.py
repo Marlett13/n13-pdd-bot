@@ -84,13 +84,23 @@ async def goal(call: CallbackQuery):
         await call.answer("Начните с /start", show_alert=True)
         return
     state["goal"] = call.data.split(":", 1)[1]
-    state["step"] = "country"
-    save_state(call.from_user.id, state)
-    await call.message.edit_text(
-        "Страна выдачи удостоверения (для обмена) или выберите «Не применимо».",
-        reply_markup=keyboard([("Казахстан", "country:KZ"), ("Другая", "country:OTHER"),
-                               ("Не применимо", "country:NA")]),
-    )
+    if state["goal"] == "exchange":
+        state["step"] = "country"
+        save_state(call.from_user.id, state)
+        await call.message.edit_text(
+            "Страна выдачи иностранного удостоверения:",
+            reply_markup=keyboard([("Казахстан", "country:KZ"), ("Другая", "country:OTHER"),
+                                   ("◀️ Назад", "nav:restart")]),
+        )
+    else:
+        state["country"] = "NA"
+        state["step"] = "category"
+        save_state(call.from_user.id, state)
+        await call.message.edit_text(
+            "Выберите категорию:",
+            reply_markup=keyboard([("B", "category:B"), ("A", "category:A"),
+                                   ("◀️ Назад", "nav:restart")]),
+        )
     await call.answer()
 
 @router.callback_query(F.data.startswith("country:"))
