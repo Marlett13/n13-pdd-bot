@@ -74,3 +74,13 @@ class SessionStore:
     def answer_count(self, user_id):
         with self.connect() as db:
             return db.execute("SELECT COUNT(*) FROM answers WHERE user_id=?", (user_id,)).fetchone()[0]
+
+    def latest_ticket_review(self, user_id, ticket, count=20):
+        """Return newest attempts for one finished ticket, in question order."""
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT position, answer, correct FROM answers
+                   WHERE user_id=? AND ticket=? ORDER BY rowid DESC LIMIT ?""",
+                (user_id, ticket, count),
+            ).fetchall()
+        return [{"position": pos, "answer": ans, "correct": bool(ok)} for pos, ans, ok in reversed(rows)]
