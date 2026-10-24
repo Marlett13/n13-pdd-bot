@@ -1,0 +1,12 @@
+services:
+  pdd:
+    environment:
+      TELEGRAM_PROXY_URL: http://mihomo:7890
+    networks:
+      - default
+      - n13_shared
+
+networks:
+  n13_shared:
+    external: true
+    name: n13_default
