@@ -7,6 +7,7 @@ import asyncio
 import os
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -220,7 +221,8 @@ async def main():
         raise SystemExit("BOT_TOKEN environment variable is required")
     bank = QuestionBank(os.getenv("PDD_BANK_PATH", "data/abm_candidate"))
     store = SessionStore(os.getenv("DATABASE_PATH", "data/n13-pdd.sqlite3"))
-    bot = Bot(token)
+    proxy = os.getenv('TELEGRAM_PROXY_URL', '').strip()
+    bot = Bot(token, session=AiohttpSession(proxy=proxy or None))
     dp = Dispatcher()
     dp.include_router(router)
     try:
