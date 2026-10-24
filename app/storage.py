@@ -84,3 +84,25 @@ class SessionStore:
                 (user_id, ticket, count),
             ).fetchall()
         return [{"position": pos, "answer": ans, "correct": bool(ok)} for pos, ans, ok in reversed(rows)]
+
+    def latest_completed_ticket(self, user_id):
+        """Find the latest run with a complete ordered 0..19 sequence, even after profile reset."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT ticket, position, answer, correct FROM answers WHERE user_id=? ORDER BY rowid DESC",
+                (user_id,),
+            ).fetchall()
+        # A run is complete when question positions 19..0 appear consecutively in reverse.
+        for start, row in enumerate(rows):
+            if row[1] != 19:
+                continue
+            part = rows[start:start + 20]
+            if len(part) == 20 and all(
+                item[0] == row[0] and item[1] == 19 - i
+                for i, item in enumerate(part)
+            ):
+                return row[0], [
+                    {"position": item[1], "answer": item[2], "correct": bool(item[3])}
+                    for item in reversed(part)
+                ]
+        return None
