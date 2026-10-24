@@ -297,14 +297,12 @@ async def review_command(message: Message):
     if not state:
         await message.answer("Сначала запустите /start")
         return
-    if not state.get("last_mistakes"):
-        ticket_number = state.get("last_ticket") or state.get("ticket")
-        if ticket_number:
-            rows = store.latest_ticket_review(message.from_user.id, ticket_number)
-            if len(rows) == 20 and sorted(r["position"] for r in rows) == list(range(20)):
-                state["last_ticket"] = ticket_number
-                state["last_mistakes"] = [r for r in rows if not r["correct"]]
-                save_state(message.from_user.id, state)
+    completed = store.latest_completed_ticket(message.from_user.id)
+    if completed:
+        ticket_number, rows = completed
+        state["last_ticket"] = ticket_number
+        state["last_mistakes"] = [r for r in rows if not r["correct"]]
+        save_state(message.from_user.id, state)
     mistakes = state.get("last_mistakes") or []
     state.pop("review_message_id", None)
     save_state(message.from_user.id, state)
