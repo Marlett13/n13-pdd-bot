@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, SendPhoto, SendMessage, EditMessageText, EditMessageReplyMarkup
+from aiogram.methods import AnswerCallbackQuery, SendPhoto, SendMessage, EditMessageText, EditMessageReplyMarkup, SetMyCommands, SetChatMenuButton
 from aiogram.types import Chat, Message, PhotoSize, Update
 
 import app.bot as app
@@ -29,7 +29,7 @@ class TelegramStub(BaseSession):
 
     async def make_request(self, bot, method, timeout=None):
         self.requests.append(method)
-        if isinstance(method, AnswerCallbackQuery):
+        if isinstance(method, (AnswerCallbackQuery, SetMyCommands, SetChatMenuButton)):
             return True
         if isinstance(method, EditMessageText) and method.message_id in self.photos:
             raise AssertionError('Telegram cannot editMessageText on a photo')
@@ -142,3 +142,32 @@ class TelegramReviewTests(unittest.IsolatedAsyncioTestCase):
         app.store.accept(42)
         await self.command('/review')
         self.assertIn('не найдено', self.session.requests[-1].text)
+
+    async def test_native_menu_registration_and_commands(self):
+        await app.configure_bot_menu(self.bot)
+        commands, button = self.session.requests
+        self.assertIsInstance(commands, SetMyCommands)
+        self.assertEqual([c.command for c in commands.commands], ['start', 'menu', 'review', 'help'])
+        self.assertIsInstance(button, SetChatMenuButton)
+        self.assertEqual(button.menu_button.type, 'commands')
+        self.complete_ticket8()
+        await self.command('/menu')
+        self.assertEqual(self.session.requests[-1].text, '🏠 Главное меню')
+        await self.command('/help')
+        self.assertIn('/review', self.session.requests[-1].text)
+        self.assertEqual(app.store.answer_count(42), 20)
+
+    async def test_start_resumes_each_onboarding_step_without_resetting_answers(self):
+        self.complete_ticket8()
+        for step, expected in [('goal', 'Цель подготовки'), ('country', 'Страна выдачи'), ('category', 'Выберите категорию')]:
+            state = app.store.get(42)
+            state['step'] = step
+            app.store.save(42, state)
+            await self.command('/start')
+            message = self.session.requests[-1]
+            self.assertIn('nav:setup', [b.callback_data for row in message.reply_markup.inline_keyboard for b in row])
+            await self.callback('nav:setup')
+            screen = [r for r in self.session.requests if isinstance(r, EditMessageText)][-1]
+            self.assertIn(expected, screen.text)
+            self.assertEqual(app.store.get(42), state)
+            self.assertEqual(app.store.answer_count(42), 20)

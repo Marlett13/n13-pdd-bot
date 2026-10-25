@@ -4,12 +4,14 @@ Telegram identifiers and training answers are persisted only after consent.
 This is a training interface, not a certified GIBDD examination.
 """
 import asyncio
+import logging
 import os
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BotCommand, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonCommands, Message
 
 from app.question_bank import QuestionBank
 from app.storage import SessionStore
@@ -19,6 +21,15 @@ bank = None
 # Ephemeral per-user state: lost on restart by design, until consent storage is implemented.
 sessions = {}
 store = None
+
+async def configure_bot_menu(bot):
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Начать или продолжить обучение"),
+        BotCommand(command="menu", description="Главное меню"),
+        BotCommand(command="review", description="Разобрать ошибки последнего билета"),
+        BotCommand(command="help", description="Помощь и команды"),
+    ])
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
 def get_state(user_id):
     return sessions.get(user_id) or (store.get(user_id) if store else None)
@@ -47,7 +58,11 @@ async def start(message: Message):
         elif previous.get("step") == "ready":
             await message.answer("Вернулись к билетам.", reply_markup=ticket_menu())
         else:
-            await message.answer("Настройка уже начата.", reply_markup=keyboard([("🔄 Начать сначала", "nav:restart")]))
+            await message.answer("Настройка не завершена. Продолжите с сохранённого шага.", reply_markup=keyboard([
+                ("▶️ Продолжить настройку", "nav:setup"),
+                ("🏠 В меню", "nav:home"),
+                ("🔄 Начать сначала", "nav:restart"),
+            ]))
         return
     await message.answer(
         "N13 ПДД 🚘\nДля обучения нужно согласие на обработку Telegram ID "
@@ -157,6 +172,8 @@ def home_keyboard(state):
     buttons = []
     if state.get("step") == "training":
         buttons.append(("▶️ Продолжить", "resume"))
+    elif state.get("step") in ("goal", "country", "category"):
+        buttons.append(("▶️ Продолжить настройку", "nav:setup"))
     buttons += [("📚 Выбрать билет", "nav:tickets"), ("🔄 Начать сначала", "nav:restart")]
     return keyboard(buttons)
 
@@ -188,6 +205,45 @@ async def menu(message: Message):
         await message.answer("🏠 Главное меню", reply_markup=home_keyboard(state))
     else:
         await start(message)
+
+@router.message(Command("help"))
+async def help_command(message: Message):
+    await message.answer(
+        "N13 ПДД 🚘\n\n"
+        "/start — начать или продолжить обучение\n"
+        "/menu — главное меню\n"
+        "/review — ошибки последнего завершённого билета\n"
+        "/help — эта справка\n\n"
+        "Команды также доступны по кнопке Telegram «Меню» рядом с полем ввода."
+    )
+
+@router.callback_query(F.data == "nav:setup")
+async def continue_setup(call: CallbackQuery):
+    state = get_state(call.from_user.id)
+    if not state:
+        await call.answer("Начните с /start", show_alert=True)
+        return
+    step = state.get("step")
+    if step == "goal":
+        text = "Цель подготовки:"
+        buttons = [
+            ("Обмен иностранных прав", "goal:exchange"),
+            ("Получение впервые", "goal:first"),
+            ("Возврат после лишения", "goal:return"),
+            ("Освежить знания", "goal:refresh"),
+            ("Другая причина", "goal:other"),
+        ]
+    elif step == "country":
+        text = "Страна выдачи иностранного удостоверения:"
+        buttons = [("Казахстан", "country:KZ"), ("Другая", "country:OTHER")]
+    elif step == "category":
+        text = "Выберите категорию:"
+        buttons = [("B", "category:B"), ("A", "category:A")]
+    else:
+        await call.answer("Настройка уже завершена. Откройте /menu", show_alert=True)
+        return
+    await navigation_screen(call, text, keyboard(buttons + [("🏠 В меню", "nav:home")]))
+    await call.answer()
 
 @router.callback_query(F.data == "nav:home")
 async def home(call: CallbackQuery):
@@ -421,6 +477,11 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
     try:
+        try:
+            await configure_bot_menu(bot)
+        except TelegramAPIError as error:
+            # A temporary menu-registration failure must not stop training/polling.
+            logging.getLogger(__name__).warning("Bot menu registration failed: %s", type(error).__name__)
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
