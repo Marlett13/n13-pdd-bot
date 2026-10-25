@@ -26,7 +26,16 @@ jobs:
           test -n "$SSH_KEY_B64" || { echo 'Missing PDD_VPS_SSH_KEY_B64'; exit 1; }
           install -m 700 -d ~/.ssh
           umask 077
-          printf '%s' "$SSH_KEY_B64" | base64 --decode > ~/.ssh/id_pdd 2>/dev/null || { echo 'SSH key is not valid Base64'; exit 1; }
+          python - <<'PYKEY'
+          import base64, os
+          from pathlib import Path
+          raw = os.environ['SSH_KEY_B64'].strip().replace('\\n', '\n').replace('\r', '')
+          try:
+              key = raw.encode() if raw.startswith('-----BEGIN ') else base64.b64decode(''.join(raw.split()), validate=True)
+              Path.home().joinpath('.ssh/id_pdd').write_bytes(key.rstrip() + b'\n')
+          except (ValueError, UnicodeError):
+              raise SystemExit('SSH key is neither a supported raw key nor valid Base64')
+          PYKEY
           ssh-keygen -y -f ~/.ssh/id_pdd >/dev/null 2>&1 || { echo 'SSH key cannot be parsed (invalid or encrypted key)'; exit 1; }
       - name: Read PDD status, sanitized logs, SQLite and Telegram connectivity
         shell: bash
