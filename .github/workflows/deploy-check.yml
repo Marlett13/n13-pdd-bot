@@ -8,6 +8,7 @@ on:
       - tools/prepare_data.py
       - requirements.txt
       - '.github/workflows/deploy-check.yml'
+      - tools/repair_code_permissions.sh
 permissions:
   contents: read
 jobs:
@@ -20,5 +21,12 @@ jobs:
         env:
           PDD_BOT_TOKEN: placeholder-only-not-a-token
         run: docker compose -f compose.yml config -q
-      - name: Build container
+      - name: Simulate source files written under umask 077
+        run: chmod -R go-rwx app tools
+      - name: Build container from restrictive source permissions
         run: docker build -t n13-pdd:ci .
+      - name: Import application as the unprivileged runtime user
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true n13-pdd:ci python -c 'import os; assert os.getuid() == 10001; import app.bot; import tools.prepare_data; print("Runtime user can import PDD code")'
+      - name: Validate permission recovery shell syntax
+        run: bash -n tools/repair_code_permissions.sh
