@@ -8,6 +8,12 @@ from tools import diagnose_vps
 
 
 class DiagnosticPrivacyTests(unittest.TestCase):
+    def test_exception_summary_keeps_only_fixed_types(self):
+        text = 'Traceback (most recent call last):\nModuleNotFoundError: private-value\nValueError: private-value\nprivate-valueError: private-value'
+        result = diagnose_vps.exception_summary(text)
+        self.assertEqual(result, {'ValueError': 1, 'ModuleNotFoundError': 1})
+        self.assertNotIn('private-value', json.dumps(result))
+
     def test_raw_logs_environment_and_probe_failure_are_not_printed(self):
         secret = 'synthetic-sensitive-marker'
         obj = {'Config': {'Env': [secret], 'Labels': {'com.docker.compose.project': 'n13-pdd',

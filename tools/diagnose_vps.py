@@ -1,10 +1,27 @@
 """Read-only PDD diagnostics. Prints only allowlisted fields, never raw logs/env."""
 import hashlib
 import json
+import re
 import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 CONTAINER = 'n13-pdd-pdd-1'
+
+EXCEPTION_TYPES = (
+    'ValueError', 'TypeError', 'AttributeError', 'RuntimeError', 'ImportError',
+    'ModuleNotFoundError', 'FileNotFoundError', 'PermissionError', 'SyntaxError',
+    'OperationalError', 'IntegrityError', 'TokenValidationError', 'ProxyError',
+    'TelegramNetworkError', 'TelegramConflictError', 'TelegramBadRequest',
+    'ClientConnectorError', 'ClientProxyConnectionError',
+)
+
+
+def exception_summary(text):
+    """Only fixed exception names/flags; never print exception messages."""
+    return {name: len(re.findall(r'(?m)^' + name + r'(?=:|$)', text))
+            for name in EXCEPTION_TYPES if re.search(r'(?m)^' + name + r'(?=:|$)', text)}
 
 
 def run(args, stdin=None):
@@ -33,6 +50,7 @@ def main():
     for window, options in [('incident', ['--since', '2026-10-25T07:26:00Z', '--until', '2026-10-25T07:37:00Z']), ('recent', ['--tail', '200'])]:
         logs = run(['docker', 'logs', *options, CONTAINER])
         text = logs.stdout + logs.stderr
+        report[window + '_exception_types'] = exception_summary(text)
         report[window + '_log_counts'] = {p: text.lower().count(p) for p in ('traceback', 'conflict', 'unauthorized', 'timeout', 'connection', 'unhandled', 'error')}
         report[window + '_known_errors'] = {p: text.lower().count(p) for p in (
             'telegramnetworkerror', 'telegramconflicterror', 'telegramunauthorizederror',
@@ -92,6 +110,11 @@ async def probe():
 asyncio.run(probe())
 print(json.dumps(r))
 '''
+    # An import/constructor failure must also produce a sanitized JSON result.
+    probe = 'import json\ntry:\n' + textwrap.indent(probe, '    ') + '''
+except Exception as exc:
+    print(json.dumps({'probe_error_type': type(exc).__name__}))
+'''
     result = run(['docker', 'exec', '-i', CONTAINER, 'python', '-'], probe)
     try:
         report['runtime'] = json.loads(result.stdout)
@@ -101,6 +124,15 @@ print(json.dumps(r))
         }
     except (ValueError, TypeError):
         report['runtime'] = {'probe_exit_code': result.returncode, 'result': 'failed_without_raw_output'}
+        error_text = (result.stdout + result.stderr).lower()
+        report['runtime']['container_restarting'] = 'is restarting' in error_text
+        report['runtime']['container_not_running'] = 'is not running' in error_text
+        report['runtime']['exception_types'] = exception_summary(result.stderr)
+    if '--summary' in sys.argv:
+        report = {key: report[key] for key in (
+            'container', 'restart_count', 'incident_exception_types',
+            'recent_exception_types', 'runtime',
+        )}
     print(json.dumps(report, indent=2))
     return 0 if result.returncode == 0 else 1
 
