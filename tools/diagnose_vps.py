@@ -25,10 +25,21 @@ def main():
     report['container'] = {k: obj['State'].get(k) for k in ('Status', 'Running', 'StartedAt', 'ExitCode', 'OOMKilled')}
     report['restart_count'] = obj['RestartCount']
     report['image_id'] = obj['Image']
+    report['checkout_hashes'] = {}
+    for name in ('app/bot.py', 'app/storage.py'):
+        path = Path('/opt/n13-pdd') / name
+        if path.is_file():
+            report['checkout_hashes'][name] = hashlib.sha256(path.read_bytes()).hexdigest()
     for window, options in [('incident', ['--since', '2026-10-25T07:26:00Z', '--until', '2026-10-25T07:37:00Z']), ('recent', ['--tail', '200'])]:
         logs = run(['docker', 'logs', *options, CONTAINER])
         text = logs.stdout + logs.stderr
         report[window + '_log_counts'] = {p: text.lower().count(p) for p in ('traceback', 'conflict', 'unauthorized', 'timeout', 'connection', 'unhandled', 'error')}
+        report[window + '_known_errors'] = {p: text.lower().count(p) for p in (
+            'telegramnetworkerror', 'telegramconflicterror', 'telegramunauthorizederror',
+            'database is locked', 'database disk image is malformed', 'no such table',
+            'there is no text in the message to edit', 'cannot connect to host',
+            'name or service not known',
+        )}
         report[window + '_log_lines'] = len(text.splitlines())
     # Runs inside existing PDD container: no token crosses the container boundary.
     probe = r'''
@@ -84,6 +95,10 @@ print(json.dumps(r))
     result = run(['docker', 'exec', '-i', CONTAINER, 'python', '-'], probe)
     try:
         report['runtime'] = json.loads(result.stdout)
+        report['code_matches_checkout'] = {
+            name: report['runtime'].get(name + '_sha256') == digest
+            for name, digest in report['checkout_hashes'].items()
+        }
     except (ValueError, TypeError):
         report['runtime'] = {'probe_exit_code': result.returncode, 'result': 'failed_without_raw_output'}
     print(json.dumps(report, indent=2))
