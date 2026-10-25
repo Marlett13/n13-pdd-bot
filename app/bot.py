@@ -160,6 +160,14 @@ def home_keyboard(state):
     buttons += [("📚 Выбрать билет", "nav:tickets"), ("🔄 Начать сначала", "nav:restart")]
     return keyboard(buttons)
 
+async def navigation_screen(call, text, markup):
+    """Photo questions have captions: Telegram cannot edit them as text messages."""
+    if call.message.photo:
+        await call.message.answer(text, reply_markup=markup)
+        await call.message.edit_reply_markup(reply_markup=None)
+    else:
+        await call.message.edit_text(text, reply_markup=markup)
+
 @router.callback_query(F.data == "noop")
 async def noop(call: CallbackQuery):
     await call.answer()
@@ -187,9 +195,7 @@ async def home(call: CallbackQuery):
     if not state:
         await call.answer("Начните с /start", show_alert=True)
         return
-    if state.get("step") == "training" and state.get("question_message_id") == call.message.message_id:
-        await call.message.edit_reply_markup(reply_markup=None)
-    await call.message.edit_text("🏠 Главное меню", reply_markup=home_keyboard(state))
+    await navigation_screen(call, "🏠 Главное меню", home_keyboard(state))
     await call.answer()
 
 @router.callback_query(F.data == "nav:tickets")
@@ -201,7 +207,7 @@ async def tickets(call: CallbackQuery):
     state["step"] = "ready"
     state.pop("question_message_id", None)
     save_state(call.from_user.id, state)
-    await call.message.edit_text("Выберите билет:", reply_markup=ticket_menu())
+    await navigation_screen(call, "Выберите билет:", ticket_menu())
     await call.answer()
 
 @router.callback_query(F.data == "nav:restart")
@@ -214,7 +220,7 @@ async def restart(call: CallbackQuery):
     state.pop("ticket", None)
     state.pop("question_message_id", None)
     save_state(call.from_user.id, state)
-    await call.message.edit_text("Цель подготовки:", reply_markup=keyboard([
+    await navigation_screen(call, "Цель подготовки:", keyboard([
         ("Обмен иностранных прав", "goal:exchange"),
         ("Получение впервые", "goal:first"),
         ("Возврат после лишения", "goal:return"),
