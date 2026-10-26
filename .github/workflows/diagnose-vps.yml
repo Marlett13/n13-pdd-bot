@@ -16,6 +16,7 @@ jobs:
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
       SSH_KEY_B64: ${{ secrets.PDD_VPS_SSH_KEY_B64 }}
+      SSH_KEY_RAW: ${{ secrets.PDD_VPS_SSH_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate SSH key without disclosure
@@ -23,18 +24,28 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VPS_HOST" || { echo 'Missing VPS_HOST'; exit 1; }
-          test -n "$SSH_KEY_B64" || { echo 'Missing PDD_VPS_SSH_KEY_B64'; exit 1; }
           install -m 700 -d ~/.ssh
           umask 077
           python - <<'PYKEY'
-          import base64, os
+          import base64, os, subprocess
           from pathlib import Path
-          raw = os.environ['SSH_KEY_B64'].strip().replace('\\n', '\n').replace('\r', '')
-          try:
-              key = raw.encode() if raw.startswith('-----BEGIN ') else base64.b64decode(''.join(raw.split()), validate=True)
-              Path.home().joinpath('.ssh/id_pdd').write_bytes(key.rstrip() + b'\n')
-          except (ValueError, UnicodeError):
-              raise SystemExit('SSH key is neither a supported raw key nor valid Base64')
+          target = Path.home() / '.ssh/id_pdd'
+          for name in ('SSH_KEY_B64', 'SSH_KEY_RAW'):
+              raw = os.environ.get(name, '').strip().replace('\\n', '\n').replace('\r', '')
+              if not raw:
+                  continue
+              try:
+                  key = raw.encode() if raw.startswith('-----BEGIN ') else base64.b64decode(''.join(raw.split()), validate=True)
+                  target.write_bytes(key.rstrip() + b'\n')
+                  check = subprocess.run(['ssh-keygen', '-y', '-P', '', '-f', str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  if check.returncode == 0:
+                      print('Usable SSH key selected from ' + name)
+                      break
+              except (ValueError, UnicodeError):
+                  continue
+          else:
+              target.unlink(missing_ok=True)
+              raise SystemExit('Neither configured SSH secret contains a usable unencrypted key')
           PYKEY
           ssh-keygen -y -f ~/.ssh/id_pdd >/dev/null 2>&1 || { echo 'SSH key cannot be parsed (invalid or encrypted key)'; exit 1; }
       - name: Read PDD status, sanitized logs, SQLite and Telegram connectivity
