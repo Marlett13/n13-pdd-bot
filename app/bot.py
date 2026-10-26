@@ -6,6 +6,8 @@ This is a training interface, not a certified GIBDD examination.
 import asyncio
 import logging
 import os
+from functools import wraps
+from weakref import WeakValueDictionary
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -21,6 +23,20 @@ bank = None
 # Ephemeral per-user state: lost on restart by design, until consent storage is implemented.
 sessions = {}
 store = None
+_training_locks = WeakValueDictionary()
+
+def serialize_training(handler):
+    """Keep navigation, resume and answer snapshots consistent per user."""
+    @wraps(handler)
+    async def wrapped(call, *args, **kwargs):
+        user_id = call.from_user.id
+        lock = _training_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _training_locks[user_id] = lock
+        async with lock:
+            return await handler(call, *args, **kwargs)
+    return wrapped
 
 async def configure_bot_menu(bot):
     await bot.set_my_commands([
@@ -179,7 +195,8 @@ def home_keyboard(state):
 
 async def navigation_screen(call, text, markup):
     """Photo questions have captions: Telegram cannot edit them as text messages."""
-    if call.message.photo:
+    state = get_state(call.from_user.id) or {}
+    if call.message.photo or call.message.message_id in question_message_ids(state):
         await call.message.answer(text, reply_markup=markup)
         await call.message.edit_reply_markup(reply_markup=None)
     else:
@@ -246,6 +263,7 @@ async def continue_setup(call: CallbackQuery):
     await call.answer()
 
 @router.callback_query(F.data == "nav:home")
+@serialize_training
 async def home(call: CallbackQuery):
     state = get_state(call.from_user.id)
     if not state:
@@ -255,6 +273,7 @@ async def home(call: CallbackQuery):
     await call.answer()
 
 @router.callback_query(F.data == "nav:tickets")
+@serialize_training
 async def tickets(call: CallbackQuery):
     state = get_state(call.from_user.id)
     if not state:
@@ -267,6 +286,7 @@ async def tickets(call: CallbackQuery):
     await call.answer()
 
 @router.callback_query(F.data == "nav:restart")
+@serialize_training
 async def restart(call: CallbackQuery):
     state = get_state(call.from_user.id)
     if not state:
@@ -295,22 +315,46 @@ def question_text(ticket_number, position, question):
         f"{question['text']}\n\n{options}\n\nВыберите номер ответа:"
     )
 
+def question_message_ids(state):
+    # Older sessions stored only the message carrying the answer buttons.
+    return list(state.get("question_message_ids") or
+                ([state["question_message_id"]] if state.get("question_message_id") else []))
+
+async def delete_question_messages(call, message_ids):
+    for message_id in dict.fromkeys(message_ids):
+        try:
+            await call.bot.delete_message(chat_id=call.message.chat.id, message_id=message_id)
+        except TelegramAPIError as error:
+            # Expired/already deleted messages must never interrupt a lesson.
+            logging.getLogger(__name__).warning("Question cleanup failed: %s", type(error).__name__)
+
 async def show_question(call, state):
+    previous_ids = question_message_ids(state)
     q = bank.ticket(state["ticket"])[state["position"]]
     text = question_text(state["ticket"], state["position"], q)
     buttons = keyboard([(str(i), f"answer:{i-1}") for i in range(1, len(q["choices"]) + 1)] + [("🏠 В меню", "nav:home")])
     path = bank.image_path(q)
-    if path and len(text) <= 1024:
-        sent = await call.message.answer_photo(
-            FSInputFile(path), caption=text, reply_markup=buttons
-        )
-    elif path:
-        await call.message.answer_photo(FSInputFile(path))
-        sent = await call.message.answer(text, reply_markup=buttons)
-    else:
-        sent = await call.message.answer(text, reply_markup=buttons)
+    new_ids = []
+    try:
+        if path and len(text) <= 1024:
+            sent = await call.message.answer_photo(
+                FSInputFile(path), caption=text, reply_markup=buttons
+            )
+        elif path:
+            photo = await call.message.answer_photo(FSInputFile(path))
+            new_ids.append(photo.message_id)
+            sent = await call.message.answer(text, reply_markup=buttons)
+        else:
+            sent = await call.message.answer(text, reply_markup=buttons)
+    except TelegramAPIError:
+        # Remove an incomplete new photo, preserving the previous complete screen.
+        await delete_question_messages(call, new_ids)
+        raise
+    new_ids.append(sent.message_id)
     state["question_message_id"] = sent.message_id
+    state["question_message_ids"] = new_ids
     save_state(call.from_user.id, state)
+    await delete_question_messages(call, previous_ids)
 
 def review_keyboard(index, length):
     items = []
@@ -395,6 +439,7 @@ async def review(call: CallbackQuery):
     await show_review(call, state, index)
 
 @router.callback_query(F.data.startswith("ticket:"))
+@serialize_training
 async def ticket(call: CallbackQuery):
     state = get_state(call.from_user.id)
     if not state or state.get("step") != "ready":
@@ -412,6 +457,7 @@ async def ticket(call: CallbackQuery):
     await show_question(call, state)
 
 @router.callback_query(F.data.startswith("answer:"))
+@serialize_training
 async def answer(call: CallbackQuery):
     state = get_state(call.from_user.id)
     if not state or state.get("step") != "training":
@@ -429,13 +475,20 @@ async def answer(call: CallbackQuery):
     if not correct:
         state["mistakes"] += 1
     state["position"] += 1
+    state["question_message_ids"] = question_message_ids(state)
     state.pop("question_message_id", None)
     if state["position"] == 20:
         state["step"] = "ready"
     store.record_answer(call.from_user.id, state, state["position"] - 1, answer_index, correct)
     # Clear buttons to prevent double answering the same message.
-    await call.message.edit_reply_markup(reply_markup=None)
-    await call.answer("Верно!" if correct else f"Неверно. Правильный ответ: {question['correct'] + 1}")
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except TelegramAPIError as error:
+        logging.getLogger(__name__).warning("Answer keyboard cleanup failed: %s", type(error).__name__)
+    try:
+        await call.answer("Верно!" if correct else f"Неверно. Правильный ответ: {question['correct'] + 1}")
+    except TelegramAPIError as error:
+        logging.getLogger(__name__).warning("Answer acknowledgement failed: %s", type(error).__name__)
     if state["position"] == 20:
         errors = state["mistakes"]
         rows = store.latest_ticket_review(call.from_user.id, state["ticket"])
@@ -452,10 +505,15 @@ async def answer(call: CallbackQuery):
             "Ответы для разбора взяты из учебной базы, не сверенной с официальными билетами.",
             reply_markup=keyboard(options),
         )
+        previous_ids = question_message_ids(state)
+        state.pop("question_message_ids", None)
+        save_state(call.from_user.id, state)
+        await delete_question_messages(call, previous_ids)
     else:
         await show_question(call, state)
 
 @router.callback_query(F.data == "resume")
+@serialize_training
 async def resume(call: CallbackQuery):
     state = get_state(call.from_user.id)
     if not state or state.get("step") != "training":
