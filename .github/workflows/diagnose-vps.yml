@@ -1,4 +1,4 @@
-name: Diagnose N13 PDD VPS (read only)
+name: VPS diagnostics and one-time authorized cache cleanup
 on:
   workflow_dispatch:
   push:
@@ -48,6 +48,45 @@ jobs:
               raise SystemExit('Neither configured SSH secret contains a usable unencrypted key')
           PYKEY
           ssh-keygen -y -f ~/.ssh/id_pdd >/dev/null 2>&1 || { echo 'SSH key cannot be parsed (invalid or encrypted key)'; exit 1; }
+      - name: One-time authorized build cache cleanup older than 24h
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Run authorized build cache cleanup older than 24h (2026-10-28)' && github.run_attempt == 1
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_pdd -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'python3 -' <<'CACHECLEAN'
+          import datetime, json, subprocess
+          def run(args, timeout=45):
+              return subprocess.check_output(args,text=True,timeout=timeout)
+          def snapshot():
+              ids=run(["docker","ps","-aq"]).split()
+              result={}
+              for c in json.loads(run(["docker","inspect",*ids]) if ids else "[]"):
+                  s=c["State"]
+                  result[c["Id"]]={"name":c["Name"],"running":s["Running"],"status":s["Status"],"started_at":s["StartedAt"],"restart_count":c["RestartCount"],"health":s.get("Health",{}).get("Status"),"image":c["Image"]}
+              return result
+          before=snapshot()
+          volumes_before=set(run(["docker","volume","ls","-q"]).split())
+          images_before=set(run(["docker","image","ls","-aq","--no-trunc"]).split())
+          print("CLEANUP_AT_UTC",datetime.datetime.now(datetime.timezone.utc).isoformat(),flush=True)
+          print("DISK_BEFORE",run(["df","-B1","/"]),flush=True)
+          print("CACHE_BEFORE",run(["docker","system","df"]),flush=True)
+          print("PRUNE_SCOPE: dangling build cache unused for at least 24 hours",flush=True)
+          result=subprocess.run(["docker","builder","prune","--force","--filter","until=24h"],text=True,capture_output=True,timeout=240)
+          print(result.stdout,flush=True)
+          print("PRUNE_EXIT_CODE",result.returncode,flush=True)
+          after=snapshot()
+          volumes_after=set(run(["docker","volume","ls","-q"]).split())
+          images_after=set(run(["docker","image","ls","-aq","--no-trunc"]).split())
+          print("CONTAINER_STATE_UNCHANGED",before==after,flush=True)
+          print("VOLUME_NAMES_UNCHANGED",volumes_before==volumes_after,flush=True)
+          print("SAVED_IMAGES_PRESERVED",images_before.issubset(images_after),flush=True)
+          for item in after.values():
+              print("CONTAINER",json.dumps(item),flush=True)
+          print("DISK_AFTER",run(["df","-B1","/"]),flush=True)
+          print("CACHE_AFTER",run(["docker","system","df"]),flush=True)
+          if result.returncode or before!=after or volumes_before!=volumes_after or not images_before.issubset(images_after):
+              raise SystemExit("Cleanup or verification requires inspection")
+          
+          CACHECLEAN
       - name: Read PDD status, sanitized logs, SQLite and Telegram connectivity
         shell: bash
         run: |
