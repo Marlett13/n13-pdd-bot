@@ -12,7 +12,7 @@ concurrency:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
       SSH_KEY_B64: ${{ secrets.PDD_VPS_SSH_KEY_B64 }}
@@ -52,6 +52,62 @@ jobs:
         shell: bash
         run: |
           ssh -i ~/.ssh/id_pdd -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'python3 -' < tools/diagnose_vps.py
+      - name: Measure server and project disk usage (read only)
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_pdd -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'python3 -' <<'DISKPROBE'
+          import datetime, json, os, subprocess
+          def run(args, timeout=55):
+              try:
+                  r=subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+                  if r.returncode:
+                      print(json.dumps({"command":args[:3],"exit_code":r.returncode}))
+                  return r.stdout
+              except subprocess.TimeoutExpired:
+                  print(json.dumps({"command":args[:3],"timeout":True}))
+                  return ""
+          def section(name, args, timeout=55):
+              print("\n=== "+name+" ===", flush=True)
+              print(run(args,timeout), flush=True)
+          print("MEASURED_AT_UTC",datetime.datetime.now(datetime.timezone.utc).isoformat(),flush=True)
+          section("FILESYSTEM_BYTES",["df","-B1","/"])
+          section("ROOT_DIRECTORY_BYTES",["du","-x","-B1","--max-depth=1","/"],90)
+          section("PROJECT_DIRECTORY_BYTES",["du","-x","-B1","--max-depth=2","/opt"],60)
+          section("VAR_DIRECTORY_BYTES",["du","-x","-B1","--max-depth=2","/var"],60)
+          section("DOCKER_DISK_USAGE",["docker","system","df","-v"],60)
+          section("JOURNAL_DISK_USAGE",["journalctl","--disk-usage"],15)
+          print("\n=== SWAP_ALLOCATED_BYTES ===",flush=True)
+          if os.path.exists("/swapfile"):
+              st=os.stat("/swapfile")
+              print(json.dumps({"path":"/swapfile","size_bytes":st.st_size,"allocated_bytes":st.st_blocks*512}))
+          print("\n=== CONTAINER_STORAGE_MAP ===",flush=True)
+          ids=run(["docker","ps","-aq"]).split()
+          if ids:
+              raw=run(["docker","inspect","--size",*ids],45)
+              for c in json.loads(raw or "[]"):
+                  labels=c.get("Config",{}).get("Labels") or {}
+                  lp=c.get("LogPath") or ""
+                  print(json.dumps({
+                      "name":c.get("Name"),"status":c.get("State",{}).get("Status"),
+                      "image_id":c.get("Image"),"image_ref":c.get("Config",{}).get("Image"),
+                      "project":labels.get("com.docker.compose.project"),
+                      "service":labels.get("com.docker.compose.service"),
+                      "working_dir":labels.get("com.docker.compose.project.working_dir"),
+                      "writable_layer_bytes":c.get("SizeRw"),
+                      "log_allocated_bytes":os.stat(lp).st_blocks*512 if lp and os.path.exists(lp) else 0,
+                      "mounts":[{"type":m.get("Type"),"name":m.get("Name"),"source":m.get("Source"),"destination":m.get("Destination")} for m in c.get("Mounts",[])]
+                  }))
+          print("\n=== VOLUME_ALLOCATED_BYTES ===",flush=True)
+          names=run(["docker","volume","ls","-q"]).split()
+          if names:
+              raw=run(["docker","volume","inspect",*names],15)
+              for v in json.loads(raw or "[]"):
+                  mp=v.get("Mountpoint")
+                  labels=v.get("Labels") or {}
+                  size=run(["du","-sx","-B1",mp],30).split()[0] if mp else None
+                  print(json.dumps({"name":v.get("Name"),"project":labels.get("com.docker.compose.project"),"allocated_bytes":size}))
+          
+          DISKPROBE
       - name: Remove runner key
         if: always()
         run: rm -f ~/.ssh/id_pdd
